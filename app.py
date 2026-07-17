@@ -1,9 +1,10 @@
 # ============================================================
 #  SISTEM KLASIFIKASI KOLEKTIBILITAS KREDIT — PT BPR MSA
 #  Model utama: XGBoost  |  Pembanding: Random Forest, MLP
-#  Jalankan dengan:  streamlit run app.py
+#  Jalankan dengan:  streamlit run app_skripsi.py
 # ============================================================
 
+import re
 import numpy as np
 import pandas as pd
 import pickle
@@ -58,7 +59,44 @@ __main__.GeoRiskScore = GeoRiskScore
 
 
 # ------------------------------------------------------------
-# 2. OPSI DROPDOWN (diambil dari dataset, otomatis tanpa duplikat)
+# 2. UTILITAS FORMAT RUPIAH
+# ------------------------------------------------------------
+def format_rupiah(angka):
+    """Ubah angka menjadi teks Rupiah.
+       1000000  ->  'Rp 1.000.000'   |   None  ->  '' (kosong)"""
+    if angka is None:
+        return ""
+    return "Rp " + f"{angka:,.0f}".replace(",", ".")
+
+
+def parse_rupiah(teks):
+    """Ubah teks menjadi angka — semua karakter selain digit dibuang.
+       'Rp 1.000.000' / '1.000.000' / '1000000'  ->  1000000.0
+       Teks kosong atau tanpa angka  ->  None"""
+    if teks is None:
+        return None
+    hanya_angka = re.sub(r"[^\d]", "", str(teks))
+    if hanya_angka == "":
+        return None
+    return float(hanya_angka)
+
+
+def rapikan_rupiah(kunci):
+    """Callback: rapikan isi kolom menjadi 'Rp 1.000.000' secara otomatis.
+       Dipanggil saat pengguna selesai mengetik (pindah kolom / tekan Enter)."""
+    angka = parse_rupiah(st.session_state.get(kunci, ""))
+    st.session_state[kunci] = format_rupiah(angka)   # None -> "" (kosong lagi)
+
+
+def input_rupiah(label, kunci):
+    """Kolom nominal Rupiah — awalnya kosong, otomatis diformat setelah diisi."""
+    st.text_input(label, key=kunci, placeholder="Rp 0",
+                  on_change=rapikan_rupiah, args=(kunci,))
+    return parse_rupiah(st.session_state.get(kunci, ""))
+
+
+# ------------------------------------------------------------
+# 3. OPSI DROPDOWN (diambil dari dataset, otomatis tanpa duplikat)
 # ------------------------------------------------------------
 @st.cache_data
 def muat_opsi():
@@ -79,8 +117,10 @@ def muat_opsi():
     }
 
 OPSI = muat_opsi()
+
+
 # ------------------------------------------------------------
-# 3. FEATURE ENGINEERING (identik dengan training)
+# 4. FEATURE ENGINEERING (identik dengan training)
 #    Menghitung DSR, LTV, rasio_tabungan, dan konversi restrukturisasi.
 # ------------------------------------------------------------
 def buat_fitur(d):
@@ -94,7 +134,7 @@ def buat_fitur(d):
 
 
 # ------------------------------------------------------------
-# 4. MUAT KETIGA MODEL (.pkl)
+# 5. MUAT KETIGA MODEL (.pkl)
 #    Sesuaikan nama berkas dengan yang Anda simpan saat training.
 # ------------------------------------------------------------
 MODEL_FILES = {
@@ -118,7 +158,7 @@ def muat_model():
 
 
 # ------------------------------------------------------------
-# 5. TAMPILAN
+# 6. TAMPILAN
 # ------------------------------------------------------------
 st.set_page_config(page_title="Klasifikasi Kolektibilitas Kredit BPR MSA",
                    page_icon="🏦", layout="wide")
@@ -129,49 +169,102 @@ st.caption("PT BPR Mahdani Sejahtera Abadi · Model utama: XGBoost · "
 
 models = muat_model()
 
-# ---- Form input dua kolom ----
-with st.form("form_nasabah"):
-    kol1, kol2 = st.columns(2)
+st.info("Seluruh kolom wajib diisi. Cukup ketik angkanya saja "
+        "(contoh: 1000000) — sistem akan merapikan menjadi Rp 1.000.000.")
 
-    with kol1:
-        st.subheader("Data Keuangan & Kredit")
-        penghasilan_bulanan = st.number_input("Penghasilan Bulanan (Rp)", min_value=0.0, value=5_000_000.0, step=500_000.0)
-        angsuran_per_bulan  = st.number_input("Angsuran per Bulan (Rp)",   min_value=0.0, value=1_500_000.0, step=100_000.0)
-        plafon_kredit       = st.number_input("Plafon Kredit (Rp)",        min_value=0.0, value=50_000_000.0, step=1_000_000.0)
-        sisa_pokok_pinjaman = st.number_input("Sisa Pokok Pinjaman (Rp)",  min_value=0.0, value=30_000_000.0, step=1_000_000.0)
-        saldo_tabungan      = st.number_input("Saldo Tabungan (Rp)",       min_value=0.0, value=2_000_000.0, step=100_000.0)
-        nilai_jaminan       = st.number_input("Nilai Jaminan (Rp)",        min_value=0.0, value=60_000_000.0, step=1_000_000.0)
-        tenor_bulan         = st.number_input("Tenor (bulan)",             min_value=0,   value=36, step=1)
-        suku_bunga          = st.number_input("Suku Bunga (%)",            min_value=0.0, value=12.0, step=0.5)
+# ---- Input dua kolom ----
+kol1, kol2 = st.columns(2)
 
-    with kol2:
-        st.subheader("Profil Nasabah & Lainnya")
-        usia               = st.number_input("Usia (tahun)",            min_value=17, value=35, step=1)
-        jumlah_tanggunan   = st.number_input("Jumlah Tanggungan",       min_value=0,  value=2, step=1)
-        lama_nasabah_bulan = st.number_input("Lama Menjadi Nasabah (bulan)", min_value=0, value=24, step=1)
-        status_pernikahan  = st.selectbox("Status Pernikahan", OPSI["status_pernikahan"])
-        pekerjaan_utama    = st.selectbox("Pekerjaan Utama",   OPSI["pekerjaan_utama"])
-        pekerjaan_detail   = st.selectbox("Pekerjaan Detail",  OPSI["pekerjaan_detail"])
-        produk_kredit      = st.selectbox("Produk Kredit",     OPSI["produk_kredit"])
-        sumber_pembayaran  = st.selectbox("Sumber Pembayaran", OPSI["sumber_pembayaran"])
-        kode_jenis_agunan  = st.selectbox("Kode Jenis Agunan", OPSI["kode_jenis_agunan"],
-                                        format_func=lambda x: str(int(x)))
-        kecamatan          = st.selectbox("Kecamatan",         OPSI["kecamatan"])
-        pernah_restruktur  = st.selectbox("Pernah Restruktur?", ["Tidak", "Ya"])
-        frekuensi_restrukturisasi = st.number_input("Frekuensi Restrukturisasi", min_value=0, value=0, step=1)
+with kol1:
+    st.subheader("Data Keuangan & Kredit")
+    penghasilan_bulanan = input_rupiah("Penghasilan Bulanan", "in_penghasilan")
+    angsuran_per_bulan  = input_rupiah("Angsuran per Bulan",  "in_angsuran")
+    plafon_kredit       = input_rupiah("Plafon Kredit",       "in_plafon")
+    sisa_pokok_pinjaman = input_rupiah("Sisa Pokok Pinjaman", "in_sisa_pokok")
+    saldo_tabungan      = input_rupiah("Saldo Tabungan",      "in_saldo")
+    nilai_jaminan       = input_rupiah("Nilai Jaminan",       "in_jaminan")
+    tenor_bulan         = st.number_input("Tenor (bulan)", min_value=0, step=1,
+                                          value=None, placeholder="contoh: 36")
+    suku_bunga          = st.number_input("Suku Bunga (%)", min_value=0.0, step=0.5,
+                                          value=None, placeholder="contoh: 12")
 
-    submit = st.form_submit_button("Prediksi Kolektibilitas", use_container_width=True, type="primary")
+with kol2:
+    st.subheader("Profil Nasabah & Lainnya")
+    usia               = st.number_input("Usia (tahun)", min_value=17, step=1,
+                                         value=None, placeholder="contoh: 35")
+    jumlah_tanggunan   = st.number_input("Jumlah Tanggungan", min_value=0, step=1,
+                                         value=None, placeholder="contoh: 2")
+    lama_nasabah_bulan = st.number_input("Lama Menjadi Nasabah (bulan)", min_value=0, step=1,
+                                         value=None, placeholder="contoh: 24")
+    status_pernikahan  = st.selectbox("Status Pernikahan", OPSI["status_pernikahan"],
+                                      index=None, placeholder="Pilih status pernikahan")
+    pekerjaan_utama    = st.selectbox("Pekerjaan Utama", OPSI["pekerjaan_utama"],
+                                      index=None, placeholder="Pilih pekerjaan utama")
+    pekerjaan_detail   = st.selectbox("Pekerjaan Detail", OPSI["pekerjaan_detail"],
+                                      index=None, placeholder="Pilih pekerjaan detail")
+    produk_kredit      = st.selectbox("Produk Kredit", OPSI["produk_kredit"],
+                                      index=None, placeholder="Pilih produk kredit")
+    sumber_pembayaran  = st.selectbox("Sumber Pembayaran", OPSI["sumber_pembayaran"],
+                                      index=None, placeholder="Pilih sumber pembayaran")
+    kode_jenis_agunan  = st.selectbox("Kode Jenis Agunan", OPSI["kode_jenis_agunan"],
+                                      index=None, placeholder="Pilih kode jenis agunan",
+                                      format_func=lambda x: str(int(x)))
+    kecamatan          = st.selectbox("Kecamatan", OPSI["kecamatan"],
+                                      index=None, placeholder="Pilih kecamatan")
+    pernah_restruktur  = st.selectbox("Pernah Restruktur?", ["Tidak", "Ya"],
+                                      index=None, placeholder="Pilih Ya / Tidak")
+    frekuensi_restrukturisasi = st.number_input("Frekuensi Restrukturisasi", min_value=0, step=1,
+                                                value=None, placeholder="contoh: 0")
+
+st.markdown("---")
+submit = st.button("Prediksi Kolektibilitas", use_container_width=True, type="primary")
 
 
 # ------------------------------------------------------------
-# 6. PREDIKSI SAAT TOMBOL DITEKAN
+# 7. PREDIKSI SAAT TOMBOL DITEKAN
 # ------------------------------------------------------------
 if submit:
     if MODEL_UTAMA not in models:
         st.error(f"Model utama ({MODEL_UTAMA}) belum termuat. Periksa berkas .pkl.")
         st.stop()
 
-    # susun 1 baris data mentah (nama kolom harus sama dengan saat training)
+    # ---- Validasi: semua kolom wajib terisi ----
+    wajib = {
+        "Penghasilan Bulanan":       penghasilan_bulanan,
+        "Angsuran per Bulan":        angsuran_per_bulan,
+        "Plafon Kredit":             plafon_kredit,
+        "Sisa Pokok Pinjaman":       sisa_pokok_pinjaman,
+        "Saldo Tabungan":            saldo_tabungan,
+        "Nilai Jaminan":             nilai_jaminan,
+        "Tenor (bulan)":             tenor_bulan,
+        "Suku Bunga":                suku_bunga,
+        "Usia":                      usia,
+        "Jumlah Tanggungan":         jumlah_tanggunan,
+        "Lama Menjadi Nasabah":      lama_nasabah_bulan,
+        "Status Pernikahan":         status_pernikahan,
+        "Pekerjaan Utama":           pekerjaan_utama,
+        "Pekerjaan Detail":          pekerjaan_detail,
+        "Produk Kredit":             produk_kredit,
+        "Sumber Pembayaran":         sumber_pembayaran,
+        "Kode Jenis Agunan":         kode_jenis_agunan,
+        "Kecamatan":                 kecamatan,
+        "Pernah Restruktur":         pernah_restruktur,
+        "Frekuensi Restrukturisasi": frekuensi_restrukturisasi,
+    }
+    kosong = [nama for nama, nilai in wajib.items() if nilai is None]
+    if kosong:
+        st.error("Kolom berikut belum diisi: " + ", ".join(kosong))
+        st.stop()
+
+    # ---- Validasi: penyebut tidak boleh nol (untuk hitung DSR & rasio tabungan) ----
+    if penghasilan_bulanan <= 0:
+        st.error("Penghasilan Bulanan harus lebih besar dari nol.")
+        st.stop()
+    if angsuran_per_bulan <= 0:
+        st.error("Angsuran per Bulan harus lebih besar dari nol.")
+        st.stop()
+
+    # ---- Susun 1 baris data mentah (nama kolom harus sama dengan saat training) ----
     data = pd.DataFrame([{
         "usia": usia,
         "status_pernikahan": status_pernikahan,
