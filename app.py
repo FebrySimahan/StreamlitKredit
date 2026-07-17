@@ -169,8 +169,6 @@ st.caption("PT BPR Mahdani Sejahtera Abadi · Model utama: XGBoost · "
 
 models = muat_model()
 
-st.info("Seluruh kolom wajib diisi. Cukup ketik angkanya saja "
-        "(contoh: 1000000) — sistem akan merapikan menjadi Rp 1.000.000.")
 
 # ---- Input dua kolom ----
 kol1, kol2 = st.columns(2)
